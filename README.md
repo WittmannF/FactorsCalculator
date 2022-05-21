@@ -3,6 +3,7 @@ Python library for quick calculation of associated factors for a given categoric
 
 ## Usage
 ```python
+from factors_calculator import FactorsCalculator
 import pandas as pd
 URL_DATA = 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
 data = pd.read_csv(URL_DATA)
