@@ -2,7 +2,7 @@
 Python library for quick calculation of associated factors for a given categorical variable using Logistic Regression
 
 ## Usage
-```
+```python
 import pandas as pd
 URL_DATA = 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
 data = pd.read_csv(URL_DATA)
@@ -27,7 +27,7 @@ fc = FactorsCalculator(
 ```
 
 Fit the estimator with:
-```
+```python
 fc.fit_report()
 ```
 Output:
@@ -44,6 +44,12 @@ weighted avg       0.81      0.81      0.81       223
 ```
 
 Next, the normalized coefficients can be visualized with:
+```python
+# Valid for Logistic Regression
+coef = fc.get_coefficients()
+print(coef)
+```
+Output:
 ```
                            Survived
 is_female                  1.298177
