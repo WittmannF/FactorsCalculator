@@ -6,6 +6,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.preprocessing import StandardScaler
+import pandas as pd
 
 class FactorsCalculator:
     def __init__(
