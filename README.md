@@ -1,5 +1,5 @@
 # Associated Factors Calculator
-Python library for quick calculation of associated factors for a given categorical variable using Logistic Regression
+Python library for quick calculation of associated factors for a given categorical variable using Machine Learning
 
 ## Usage
 ```python
