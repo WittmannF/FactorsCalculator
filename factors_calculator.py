@@ -66,7 +66,7 @@ class FactorsCalculator:
         coef = pd.DataFrame(
             self.clf.coef_,
             columns=output_names,
-            index=self.idx_to_label
+            #index=self.idx_to_label
         ).T
 
         sorted_idx = coef.apply(
