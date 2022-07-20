@@ -6,6 +6,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import classification_report
 from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
+from catboost import CatBoostRegressor
+import matplotlib.pyplot as plt
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -28,7 +30,7 @@ class FactorsCalculatorRegressor:
         target_col, 
         random_st=42, 
         log_target=False,
-        estimator='random_forest',
+        estimator='catboost',
         imputer_strategy='simple',
 ):
         self.num_cols, self.cat_cols = num_cols, cat_cols
@@ -52,6 +54,8 @@ class FactorsCalculatorRegressor:
 
         if estimator=='random_forest':
             self.reg = RandomForestRegressor(random_state=random_st)
+        elif estimator=='catboost':
+            self.reg = CatBoostRegressor()
         else:
             self.reg = LinearRegression()
         
@@ -91,8 +95,27 @@ class FactorsCalculatorRegressor:
     def test_binary_column(self, binary_column):
         print('Significance test on', binary_column)
         filter_feature = self.data[binary_column]==1
-        with_feature = self.data.loc[filter_feature, self.target_col].values
-        without_feature = self.data.loc[~filter_feature, self.target_col].values
+        with_feature = self.data.loc[filter_feature, 'target'].values
+        without_feature = self.data.loc[~filter_feature, 'target'].values
+        sns.histplot(
+            x="target", 
+            hue=binary_column, 
+            data=self.data,
+            multiple="dodge",
+            binwidth=1
+            #element="step"
+        ).set_title(
+            'Distributions of binary feature'
+        )
+        plt.show()
+        sns.boxplot(
+            x=binary_column,
+            y='target',
+            data=self.data
+        ).set_title(
+            'Boxplot of binary feature'
+        )
+        plt.show()
         U1, p = mannwhitneyu(with_feature, without_feature, alternative='two-sided')
         print('Two-sided p-value for Mann–Whitney U test is', p)
         return p
@@ -119,7 +142,7 @@ class FactorsCalculatorRegressor:
             coef = coef.loc[sorted_idx]
 
             return coef
-        elif self.estimator=='random_forest':
+        elif self.estimator=='random_forest' or self.estimator=='catboost':
             output_names = self._proc_output_names()
             feat_imp = pd.DataFrame(
                 {
@@ -147,18 +170,15 @@ class FactorsCalculatorRegressor:
 
         return feat_imp
     
-    def get_shap(self):
-        feature_names = self.data.columns
-
-        def model_predict(data_asarray):
-            data_asframe = pd.DataFrame(data_asarray, columns=feature_names)
-            return self.model.predict(data_asframe)
-        
-        shap_kernel_explainer = shap.KernelExplainer(model_predict, self.train)
-
-        shap_values = shap_kernel_explainer.shap_values(self.test)
-
-        shap.summary_plot(shap_values, self.test)
+    def get_shap(self, return_shap_values=False):
+        explainer = shap.TreeExplainer(self.model['estimator'])
+        observations = self.model['preprocessor'].transform(self.test)
+        feature_names = self._proc_output_names()
+        observations = pd.DataFrame(observations, columns=feature_names)
+        shap_values = explainer(observations)
+        shap.summary_plot(shap_values)
+        if return_shap_values:
+            return shap_values
     
     def plot_importance(
         self,
