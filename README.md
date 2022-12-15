@@ -1,9 +1,11 @@
-# Associated Factors Calculator
-Python library for quick calculation of associated factors for a given categorical variable using Machine Learning
+# Personal DS Utility Functions Repo
 
-## Usage
+## `ml.FactorsCalculator`
+Quick calculation of associated factors for a given categorical variable using Machine Learning
+
+### Usage
 ```python
-from factors_calculator import FactorsCalculator
+from ds_utils.ml import FactorsCalculator
 import pandas as pd
 URL_DATA = 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
 data = pd.read_csv(URL_DATA)
