@@ -9,7 +9,7 @@ class ZeroShotTextClassifier:
         elif language=='pt':
             self.model = SentenceTransformer('rufimelo/bert-large-portuguese-cased-sts')
     
-    def predict(self, X, labels, return_type='text_labels'):
+    def predict(self, X, labels, return_type='labels'):
         embedding_1= self.model.encode(X, convert_to_tensor=True)
         embedding_2= self.model.encode(labels, convert_to_tensor=True)
         cos_sim = util.pytorch_cos_sim(embedding_1, embedding_2)
