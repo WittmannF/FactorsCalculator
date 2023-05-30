@@ -124,9 +124,32 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self.oof_score_ = r2_score(y, self.oof_train_)
         self.oof_mape_ = mean_absolute_percentage_error(y, self.oof_train_)
         self.oof_rmse_ = mean_squared_error(y, self.oof_train_, squared=False)
+        self.metrics_ = self.get_metrics_summary()
 
         return self
     
+    @staticmethod
+    def _append_df(df, new_row):
+        df = pd.concat([df, pd.DataFrame([new_row])])
+        return df
+
+    def get_metrics_summary(self):
+        metrics = self.cv_results_
+        metrics = metrics.drop('reg', axis=1)
+        metrics = metrics.set_index('fold')
+        metrics_mean = metrics.mean().rename('mean')
+        metrics_std = metrics.std().rename('std')
+        metrics = self._append_df(metrics, metrics_mean)
+        metrics = self._append_df(metrics, metrics_std)
+        oof_score = self.oof_score_
+        oof_mape = self.oof_mape_
+        if self.verbose:
+            print('Metrics')
+            print(metrics)
+            print('CV R2 Score (OOF):', oof_score)
+            print('CV MAPE (OOF):', oof_mape)
+        return metrics
+
     def predict(self, X):
         y_preds = []
         for reg in self.cv_results_.reg.values:
@@ -220,6 +243,56 @@ class MedianKNNRegressor(KNeighborsRegressor):
 
 
 class AutoRegressor:
+    """
+    AutoRegressor is a class for performing automated regression tasks, including preprocessing and model fitting.
+    It supports several regression algorithms and allows for easy comparison of their performance on a given dataset.
+    The class provides various methods for model evaluation, feature importance, and visualization.
+
+    Example Usage:
+        ar = AutoRegressor(num_cols, cat_cols, target_col, data)
+        ar.fit_report()
+
+    Parameters
+    ----------
+    num_cols : list
+        List of numerical columns in the dataset.
+    cat_cols : list
+        List of categorical columns in the dataset.
+    target_col : str
+        Target column name in the dataset.
+    data : pd.DataFrame, optional
+        Input dataset (pandas DataFrame) containing both features and target column.
+        If not provided, `train` and `test` datasets should be supplied. Default is None.
+    train : pd.DataFrame, optional
+        Training dataset (pandas DataFrame) containing both features and target column.
+        Used if `data` is not provided. Default is None.
+    test : pd.DataFrame, optional
+        Testing dataset (pandas DataFrame) containing both features and target column.
+        Used if `data` is not provided. Default is None.
+    random_st : int, optional
+        Random state for reproducibility. Default is 42.
+    log_target : bool, optional
+        Boolean flag to indicate if the logarithm of the target variable should be used.
+        Default is False.
+    estimator : str or estimator object, optional
+        String or estimator object. Options are 'catboost', 'random_forest', and 'linear'.
+        Default is 'catboost'.
+    imputer_strategy : str, optional
+        Imputation strategy for missing values. Options are 'simple' and 'knn'.
+        Default is 'simple'.
+    use_catboost_native_cat_features : bool, optional
+        Boolean flag to indicate if the native CatBoost categorical feature handling should be used.
+        Default is False.
+    ohe_min_freq : float, optional
+        Minimum frequency for OneHotEncoder to consider a category in categorical columns.
+        Default is 0.05.
+    scale_numeric_data : bool, optional
+        Boolean flag to indicate if numeric data should be scaled using StandardScaler.
+        Default is False.
+    scale_categoric_data : bool, optional
+        Boolean flag to indicate if categorical data (after one-hot encoding) should be scaled using StandardScaler.
+        Default is False.
+    """
     def __init__(
         self,
         num_cols, 
