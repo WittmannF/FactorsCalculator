@@ -30,12 +30,153 @@ from sklearn.metrics import r2_score
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import KFold
 from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import TimeSeriesSplit
 import copy
+
+class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
+    def __init__(self, base_reg, cv=5, verbose=False):
+        """
+        Train a base regressor using timeseries cross-validation and also record metrics.
+        Parameters
+        ----------
+        base_reg : estimator object implementing 'fit'
+            The object to use to fit the data.
+        cv : int, default=5
+            Determines the cross-validation splitting strategy.
+            Possible inputs for cv are:
+            - int, to specify the number of folds in a `KFold`,
+        verbose : bool, default=False
+            Wheter or not to print metrics"""
+        # Parameters
+        self.cv = cv
+        self.base_reg = base_reg
+        self.verbose = verbose
+
+        # Internal Parameters
+        self._tss = TimeSeriesSplit(n_splits=cv)
+
+        # Attributes
+        self.cv_results_ = []
+        self.metrics_ = None
+
+    def fit(self, X, y, sample_weight=None):
+        ts_split = self._tss.split(X)
+
+        # Loop over train/test subsets
+        for fold_n, (train_index, test_index) in enumerate(ts_split):
+            if isinstance(X, pd.DataFrame):
+                X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+            else:
+                X_train, X_test = X[train_index], X[test_index]
+
+            if isinstance(y, pd.Series):
+                y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+            elif isinstance(y, pd.DataFrame):
+                y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+            else:
+                y_train, y_test = y[train_index], y[test_index]
+            
+            # Apply weights for current fold if sample_weight is not None
+            if sample_weight is not None:
+                if isinstance(sample_weight, pd.Series):
+                    sample_weight_train = sample_weight.iloc[train_index]
+                elif isinstance(sample_weight, pd.DataFrame):
+                    sample_weight_train = sample_weight.iloc[train_index]
+                else: # Assume it is a numpy array
+                    sample_weight_train = sample_weight[train_index]
+            else:
+                sample_weight_train = None
+
+            reg = copy.deepcopy(self.base_reg)
+            reg.fit(X_train, y_train, sample_weight=sample_weight_train)
+            if self.verbose:
+                print(f'Fold {fold_n} Results:')
+                metrics, y_pred = self._get_reg_metrics(reg, X_test, y_test)
+                print('-'*80)
+            else:
+                metrics, y_pred = self._get_reg_metrics(reg, X_test, y_test)
+            
+            self.cv_results_.append(
+                {
+                    'fold': fold_n,
+                    'train_size': len(train_index),
+                    'test_size': len(test_index),
+                    'train_start_index': train_index[0],
+                    'train_end_index': train_index[-1],
+                    'test_start_index': test_index[0],
+                    'test_end_index': test_index[-1],
+                    'metrics': metrics
+                }
+            )
+        # Fit the base regressor on the full data
+        if sample_weight is not None:
+            self.base_reg.fit(X, y, sample_weight=sample_weight)
+        else:
+            self.base_reg.fit(X, y)
+            
+        self._convert_report_to_df()
+        self.metrics_ = self.get_metrics_summary()
+
+        return self
+
+ 
+    @staticmethod
+    def _append_df(df, new_row):
+        df = pd.concat([df, pd.DataFrame([new_row])])
+        return df
+
+    def get_metrics_summary(self):
+        metrics = self.cv_results_
+        metrics = metrics.set_index('fold')
+        metrics_mean = metrics.mean().rename('mean')
+        metrics_std = metrics.std().rename('std')
+        metrics = self._append_df(metrics, metrics_mean)
+        metrics = self._append_df(metrics, metrics_std)
+        if self.verbose:
+            print('Metrics')
+            print(metrics)
+        return metrics
+
+    def predict(self, X):
+        return self.base_reg.predict(X)
+    
+    def _convert_report_to_df(self):
+        self.cv_results_ = pd.DataFrame(self.cv_results_)
+        m = pd.DataFrame(
+            self.cv_results_.metrics.tolist(), columns=[
+                'r2_score', 'rmse', 'mape'
+            ]
+        )
+
+        self.cv_results_ = pd.concat([self.cv_results_, m], axis=1)
+        self.cv_results_ = self.cv_results_.drop('metrics', axis=1)
+    
+    def _reg_metrics(self, y, y_pred):
+        r2 = r2_score(y, y_pred)
+        rmse = mean_squared_error(y, y_pred, squared=False)
+        mape = mean_absolute_percentage_error(y, y_pred)
+        if self.verbose:
+            print('R2 Score:', r2)
+            print('RMSE:', rmse)
+            print('MAPE:', mape)
+        
+        return r2, rmse, mape
+
+    def _get_reg_metrics(self, reg, X, y):
+        y_pred = reg.predict(X)
+
+        r2, rmse, mape = self._reg_metrics(y, y_pred)
+
+        return (r2, rmse, mape), y_pred
+
 
 class RegressorCV(BaseEstimator, RegressorMixin):
     def __init__(self, base_reg, cv=5, groups=None, verbose=False):
         """
-        Train a base regressor using cross-validation and also record metrics.
+        Trains an estimator using cross-validation and records metrics for each fold. Also stores
+        each model that is trained on each fold of the cross-validation process. The final 
+        prediction is made as the median value of the predictions from each stored model.
+
         Parameters
         ----------
         base_reg : estimator object implementing 'fit'
@@ -78,6 +219,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self.oof_score_ = None
         self.oof_mape_ = None
         self.oof_rmse_ = None
+        self.metrics_ = None
 
         
     def fit(self, X, y):
