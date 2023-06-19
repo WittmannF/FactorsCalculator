@@ -34,7 +34,7 @@ from sklearn.model_selection import TimeSeriesSplit
 import copy
 
 class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
-    def __init__(self, base_reg, cv=5, verbose=False):
+    def __init__(self, base_reg, cv=5, verbose=False, catboost_use_eval_set=False):
         """
         Train a base regressor using timeseries cross-validation and also record metrics.
         Parameters
@@ -46,11 +46,15 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
             Possible inputs for cv are:
             - int, to specify the number of folds in a `KFold`,
         verbose : bool, default=False
-            Wheter or not to print metrics"""
+            Wheter or not to print metrics
+        catboost_use_eval_set : bool, default=False
+            Whether or not to use eval_set in CatBoostRegressor
+        """
         # Parameters
         self.cv = cv
         self.base_reg = base_reg
         self.verbose = verbose
+        self.catboost_use_eval_set = catboost_use_eval_set
 
         # Internal Parameters
         self._tss = TimeSeriesSplit(n_splits=cv)
@@ -58,6 +62,8 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         # Attributes
         self.cv_results_ = []
         self.metrics_ = None
+        self.y_test_last_fold_ = None
+        self.y_pred_last_fold_ = None
 
     def fit(self, X, y, sample_weight=None):
         ts_split = self._tss.split(X)
@@ -88,7 +94,12 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
                 sample_weight_train = None
 
             reg = copy.deepcopy(self.base_reg)
-            reg.fit(X_train, y_train, sample_weight=sample_weight_train)
+            # TODO: Fix 'to employ eval_set' error
+            if self.catboost_use_eval_set:
+                reg.fit(X_train, y_train, eval_set=(X_test, y_test), sample_weight=sample_weight_train)
+            else:
+                reg.fit(X_train, y_train, sample_weight=sample_weight_train)
+
             if self.verbose:
                 print(f'Fold {fold_n} Results:')
                 metrics, y_pred = self._get_reg_metrics(reg, X_test, y_test)
@@ -99,6 +110,7 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
             self.cv_results_.append(
                 {
                     'fold': fold_n,
+                    'reg': reg,
                     'train_size': len(train_index),
                     'test_size': len(test_index),
                     'train_start_index': train_index[0],
@@ -108,11 +120,21 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
                     'metrics': metrics
                 }
             )
+        # Store y_test and y_pred from last fold
+        self.y_test_last_fold_ = y_test
+        self.y_pred_last_fold_ = y_pred
+
         # Fit the base regressor on the full data
         if sample_weight is not None:
-            self.base_reg.fit(X, y, sample_weight=sample_weight)
+            if self.catboost_use_eval_set:
+                self.base_reg.fit(X, y, sample_weight=sample_weight, eval_set=(X, y))
+            else:
+                self.base_reg.fit(X, y, sample_weight=sample_weight)
         else:
-            self.base_reg.fit(X, y)
+            if self.catboost_use_eval_set: 
+                self.base_reg.fit(X, y, eval_set=(X, y))
+            else:
+                self.base_reg.fit(X, y)
             
         self._convert_report_to_df()
         self.metrics_ = self.get_metrics_summary()
@@ -127,11 +149,16 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
 
     def get_metrics_summary(self):
         metrics = self.cv_results_
-        metrics = metrics.set_index('fold')
+        metrics = metrics.drop(['reg'], axis=1).set_index('fold')
         metrics_mean = metrics.mean().rename('mean')
         metrics_std = metrics.std().rename('std')
         metrics = self._append_df(metrics, metrics_mean)
         metrics = self._append_df(metrics, metrics_std)
+        int_cols = [
+            'train_size', 'test_size', 'train_start_index', 'train_end_index', 'test_start_index', 
+            'test_end_index'
+        ]
+        metrics[int_cols] = metrics[int_cols].astype(int)
         if self.verbose:
             print('Metrics')
             print(metrics)
@@ -222,7 +249,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self.metrics_ = None
 
         
-    def fit(self, X, y):
+    def fit(self, X, y, **kwargs):
         self.oof_train_ = pd.Series(index=y.index, dtype='float64')
 
         # Add groups if parameters was declared
@@ -245,7 +272,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
             else:
                 y_train, y_test = y[train_index], y[test_index]
             reg = copy.deepcopy(self.base_reg)
-            reg.fit(X_train, y_train)
+            reg.fit(X_train, y_train, **kwargs)
             if self.verbose:
                 print(f'Fold {fold_n} Results:')
                 metrics, y_pred = self._get_reg_metrics(reg, X_test, y_test)
