@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Catboost related
+*.tsv
+*.json
+*.tmp
+*.tfevents
+
 # C extensions
 *.so
 

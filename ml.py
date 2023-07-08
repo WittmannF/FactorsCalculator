@@ -28,12 +28,12 @@ from sklearn.utils.validation import check_array
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.metrics import r2_score
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.model_selection import GroupKFold
 import copy
 
 class RegressorCV(BaseEstimator, RegressorMixin):
-    def __init__(self, base_reg, cv=5, groups=None, verbose=False):
+    def __init__(self, base_reg, cv=5, groups=None, verbose=False, n_bins_stratify=None):
         """
         Train a base regressor using cross-validation and also record metrics.
         Parameters
@@ -50,6 +50,10 @@ class RegressorCV(BaseEstimator, RegressorMixin):
             Group labels for the samples used while splitting the dataset into
             train/test set. If cv is an integer, a `GroupKFold` object is going
             to be declared.
+        n_bins_stratify : int, default=None
+            Number of bins to use for stratification. If cv is an integer, a
+            `StratifiedKFold` object is going to be declared. If groups is
+            declared, it will be used instead of n_bins_stratify.
         verbose : bool, default=False
             Wheter or not to print metrics"""
         # Parameters
@@ -57,14 +61,19 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self.base_reg = base_reg
         self.verbose = verbose
         self.groups = groups
+        self.n_bins_stratify = n_bins_stratify
 
         # Internal Parameters
         if isinstance(cv, int): # Check if cv is an int instead of a CV object
-            # Create a GroupKFold object if groups is not None
-            if groups is None:
-                self._kf = KFold(n_splits=cv, shuffle=True, random_state=42)
-            else:
+            # Add groups if parameters was declared
+            if groups is not None:
                 self._kf = GroupKFold(n_splits=cv)
+            # Add stratify if parameters was declared
+            elif n_bins_stratify is not None:
+                self._kf = StratifiedKFold(n_splits=cv)
+            # Otherwise, use KFold
+            else:
+                self._kf = KFold(n_splits=cv, shuffle=True, random_state=42)
         else:
             self._kf = cv # Assumes it is a CV Splitter
 
@@ -83,11 +92,20 @@ class RegressorCV(BaseEstimator, RegressorMixin):
     def fit(self, X, y):
         self.oof_train_ = pd.Series(index=y.index, dtype='float64')
 
-        # Add groups if parameters was declared
-        if self.groups is None:
-            kf_split = self._kf.split(X)
-        else:
+        # Check if groups is declared
+        if self.groups is not None:
             kf_split = self._kf.split(X, groups=self.groups)
+        elif self.n_bins_stratify is not None:
+            y_bin = pd.cut(y, self.n_bins_stratify, labels=False)
+            kf_split = self._kf.split(X, y_bin)
+            if self.verbose:
+                print('Stratifying')
+                print(y_bin.value_counts().sort_index())
+                print(y_bin.value_counts(normalize=True).sort_index())
+                print('-'*80)
+
+        else:
+            kf_split = self._kf.split(X)
 
         # Loop over train/test subsets
         for fold_n, (train_index, test_index) in enumerate(kf_split):
@@ -102,6 +120,29 @@ class RegressorCV(BaseEstimator, RegressorMixin):
                 y_train, y_test = y.iloc[train_index], y.iloc[test_index]
             else:
                 y_train, y_test = y[train_index], y[test_index]
+            
+            if self.verbose:
+                # Check if stratification is consistent
+                if self.n_bins_stratify is not None:
+                    y_train_bin = y_bin.iloc[train_index]
+                    y_test_bin = y_bin.iloc[test_index]
+                    print('Training set stratification')
+                    print(y_train_bin.value_counts().sort_index())
+                    print(y_train_bin.value_counts(normalize=True).sort_index())
+                    print('Testing set stratification')
+                    print(y_test_bin.value_counts().sort_index())
+                    print(y_test_bin.value_counts(normalize=True).sort_index())
+                    print('-'*80)
+                else:
+                    y_train_bin = pd.cut(y_train, 10)
+                    y_test_bin = pd.cut(y_test, 10)
+                    print('Training set no stratification')
+                    print(y_train_bin.value_counts().sort_index())
+                    print(y_train_bin.value_counts(normalize=True).sort_index())
+                    print('Testing set no stratification')
+                    print(y_test_bin.value_counts().sort_index())
+                    print(y_test_bin.value_counts(normalize=True).sort_index())
+                    print('-'*80)
             reg = copy.deepcopy(self.base_reg)
             reg.fit(X_train, y_train)
             if self.verbose:
@@ -189,7 +230,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         return (r2, rmse, mape), y_pred
 
 class CatBoostRegressorCV(RegressorCV):
-    def __init__(self, cv=5, cat_features=None, groups=None, verbose=False, **reg_args):
+    def __init__(self, cv=5, cat_features=None, groups=None, verbose=False, n_bins_stratify=None, **reg_args):
         self.cat_features = cat_features
         base_reg = CatBoostRegressor(
             verbose=0,
@@ -200,11 +241,12 @@ class CatBoostRegressorCV(RegressorCV):
             cv=cv,
             base_reg=base_reg,
             groups=groups,
-            verbose=verbose
+            verbose=verbose,
+            n_bins_stratify=n_bins_stratify
         )
 
-class MedianKNNRegressor(KNeighborsRegressor):
-    def predict(self, X, return_match_index=False):
+class KNNRegressor(KNeighborsRegressor):
+    def predict(self, X, return_match_index=False, pred_calc='mean'):
         X = check_array(X, accept_sparse='csr')
 
         neigh_dist, neigh_ind = self.kneighbors(X)
@@ -217,10 +259,19 @@ class MedianKNNRegressor(KNeighborsRegressor):
 
         ######## Begin modification
         if weights is None:
-            y_pred = np.median(_y[neigh_ind], axis=1)
+            if pred_calc=='mean':
+                y_pred = np.mean(_y[neigh_ind], axis=1)
+            elif pred_calc=='median':
+                y_pred = np.median(_y[neigh_ind], axis=1)
         else:
-            # y_pred = weighted_median(_y[neigh_ind], weights, axis=1)
-            raise NotImplementedError("weighted median")
+            #y_pred = weighted_median(_y[neigh_ind], weights, axis=1)
+            #raise NotImplementedError("weighted median")
+            y_pred = np.empty((neigh_dist.shape[0], _y.shape[1]), dtype=np.float64)
+            denom = np.sum(weights, axis=1)
+
+            for j in range(_y.shape[1]):
+                num = np.sum(_y[neigh_ind, j] * weights, axis=1)
+                y_pred[:, j] = num / denom
         ######### End modification
 
         if self._y.ndim == 1:
@@ -236,7 +287,7 @@ class MedianKNNRegressor(KNeighborsRegressor):
 
             nearest_matched_index = np.array(nearest_index)
 
-            return y_pred, nearest_matched_index
+            return y_pred, nearest_matched_index, neigh_ind
         else:
             return y_pred
 
@@ -308,7 +359,8 @@ class AutoRegressor:
         use_catboost_native_cat_features=False,
         ohe_min_freq=0.05,
         scale_numeric_data=False,
-        scale_categoric_data=False
+        scale_categoric_data=False,
+        scale_target=False
 ):
         self.num_cols, self.cat_cols = num_cols, cat_cols
         self.estimator = estimator
@@ -339,6 +391,18 @@ class AutoRegressor:
             self.test['target'] = self.test[target_col]
             self.test.drop(columns=target_col, inplace=True)
             self.data = pd.concat([train, test])
+        
+        if scale_target: # Use StandardScaler to scale target
+            self.target_scaler = StandardScaler()
+            self.train['target'] = self.target_scaler.fit_transform(
+                self.train['target'].values.reshape(-1, 1)
+            )
+            self.test['target'] = self.target_scaler.transform(
+                self.test['target'].values.reshape(-1, 1)
+            )
+        else:
+            self.target_scaler = None
+
 
         self.prep = self.get_pipeline_preprocessor()
 
@@ -496,6 +560,7 @@ class AutoRegressor:
         return
 
     def get_pipeline_preprocessor(self):
+        
         if self.imputer_strategy=='knn':
             self.num_out_transformer = KNNImputer(n_neighbors=3)
         elif self.imputer_strategy=='simple':
@@ -987,3 +1052,4 @@ def get_model_pipeline(preprocessor, reg):
     )
     
     return model
+
