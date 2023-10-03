@@ -11,7 +11,11 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import make_column_selector
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.neighbors import KNeighborsClassifier # KNeighborsRegressor,
+try:
+    from .ml import KNNRegressor
+except ImportError:
+    from ml import KNNRegressor
 from catboost import CatBoostRegressor
 import numpy as np
 
@@ -33,6 +37,7 @@ class TreeBasedKNeighbors(BaseEstimator):
         self.tree_model = tree_model
         self.knn_model = None
         self.weights = weights
+        self.feature_importances_ = None
 
     def fit(self, X, y):
         """
@@ -46,8 +51,12 @@ class TreeBasedKNeighbors(BaseEstimator):
         Parameters:
         - X: The input data.
         """
-        feature_importances = self.tree_model.feature_importances_
-        transformed_X = X.multiply(feature_importances)
+        # If X is a scipy sparse matrix, convert it to a dense array
+        if hasattr(X, 'toarray'):
+            X = X.toarray()
+            
+        transformed_X = X * self.feature_importances_
+        
         return transformed_X
 
     def predict(self, X):
@@ -77,10 +86,13 @@ class TreeBasedKNeighborsRegressor(TreeBasedKNeighbors, RegressorMixin):
         # Train tree-based model
         self.tree_model.fit(X, y)
 
+        # Get feature importances
+        self.feature_importances_ = self.tree_model.feature_importances_
+
         # Transform input data using feature importances
         transformed_X = self.transform(X)
 
-        self.knn_model = KNeighborsRegressor(n_neighbors=self.k, weights=self.weights)
+        self.knn_model = KNNRegressor(n_neighbors=self.k, weights=self.weights)
         self.knn_model.fit(transformed_X, y)
 
 
@@ -100,6 +112,9 @@ class TreeBasedKNeighborsClassifier(TreeBasedKNeighbors, ClassifierMixin):
 
         # Train tree-based model
         self.tree_model.fit(X, y)
+
+        # Get feature importances
+        self.feature_importances_ = self.tree_model.feature_importances_
 
         # Transform input data using feature importances
         transformed_X = self.transform(X)
@@ -153,7 +168,7 @@ if __name__ == "__main__":
         ('TreeBasedKNeighborsRegressor with Distance Weights and CatBoost', TreeBasedKNeighborsRegressor(weights='distance', tree_model=CatBoostRegressor(verbose=0))),
         ('Linear Regression', LinearRegression()),
         ('Random Forest', RandomForestRegressor(random_state=42)),
-        ('KNN', KNeighborsRegressor(weights='uniform')),
+        ('KNN', KNNRegressor(weights='uniform')),
     ]
 
     for name, model in models:
