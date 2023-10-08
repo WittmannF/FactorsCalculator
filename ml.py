@@ -359,7 +359,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self._convert_report_to_df()
         # TODO: Reverse back if add_box_cox_target is True
         if self.add_box_cox_target:
-            self.oof_train_ = inv_boxcox1p(self.oof_train_, self.lmda)
+            # self.oof_train_ = inv_boxcox1p(self.oof_train_, self.lmda)
             y = inv_boxcox1p(y, self.lmda)
         
         self.oof_score_ = r2_score(y, self.oof_train_)
@@ -398,6 +398,9 @@ class RegressorCV(BaseEstimator, RegressorMixin):
 
         y_pred = np.median(y_preds, axis=0)
         
+        # Reverse y_pred here if add_box_cox_target is true
+        if self.add_box_cox_target:
+            y_pred = inv_boxcox1p(y_pred, self.lmda)
         return y_pred
     
     def _convert_report_to_df(self):
