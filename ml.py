@@ -176,6 +176,8 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         return metrics
 
     def predict(self, X):
+        if self.add_box_cox_target:
+            return inv_boxcox1p(self.base_reg.predict(X), self.lmda)
         return self.base_reg.predict(X)
     
     def _convert_report_to_df(self):
