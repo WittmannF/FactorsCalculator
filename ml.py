@@ -32,9 +32,11 @@ from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.model_selection import GroupKFold
 from sklearn.model_selection import TimeSeriesSplit
 import copy
+from scipy.special import inv_boxcox1p, boxcox1p
+from sklearn.preprocessing import PowerTransformer
 
 class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
-    def __init__(self, base_reg, cv=5, verbose=False, catboost_use_eval_set=False):
+    def __init__(self, base_reg, cv=5, verbose=False, catboost_use_eval_set=False, add_box_cox_target=False):
         """
         Train a base regressor using timeseries cross-validation and also record metrics.
         Parameters
@@ -55,6 +57,7 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         self.base_reg = base_reg
         self.verbose = verbose
         self.catboost_use_eval_set = catboost_use_eval_set
+        self.add_box_cox_target=add_box_cox_target
 
         # Internal Parameters
         self._tss = TimeSeriesSplit(n_splits=cv)
@@ -64,8 +67,16 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         self.metrics_ = None
         self.y_test_last_fold_ = None
         self.y_pred_last_fold_ = None
+            
 
     def fit(self, X, y, sample_weight=None):
+        if self.add_box_cox_target:
+            pt = PowerTransformer(method="box-cox")
+            y = pd.Series(np.where(y==0, np.nan, y))
+            pt.fit(y.to_frame())
+            self.lmda = pt.lambdas_[0]
+            y = boxcox1p(y, self.lmda)
+        
         ts_split = self._tss.split(X)
 
         # Loop over train/test subsets
@@ -165,6 +176,8 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         return metrics
 
     def predict(self, X):
+        if self.add_box_cox_target:
+            return inv_boxcox1p(self.base_reg.predict(X), self.lmda)
         return self.base_reg.predict(X)
     
     def _convert_report_to_df(self):
@@ -190,7 +203,13 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
         return r2, rmse, mape
 
     def _get_reg_metrics(self, reg, X, y):
+        # Reverse back y_pred if add_box_cox_target is True
+        if self.add_box_cox_target:
+            y = inv_boxcox1p(y, self.lmda)
+            
         y_pred = reg.predict(X)
+        if self.add_box_cox_target:
+            y_pred = inv_boxcox1p(y_pred, self.lmda)
 
         r2, rmse, mape = self._reg_metrics(y, y_pred)
 
@@ -198,7 +217,7 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
 
 
 class RegressorCV(BaseEstimator, RegressorMixin):
-    def __init__(self, base_reg, cv=5, groups=None, verbose=False, n_bins_stratify=None):
+    def __init__(self, base_reg, cv=5, groups=None, verbose=False, n_bins_stratify=None, add_box_cox_target=False):
         """
         Trains an estimator using cross-validation and records metrics for each fold. Also stores
         each model that is trained on each fold of the cross-validation process. The final 
@@ -230,6 +249,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         self.verbose = verbose
         self.groups = groups
         self.n_bins_stratify = n_bins_stratify
+        self.add_box_cox_target=add_box_cox_target
 
         # Internal Parameters
         if isinstance(cv, int): # Check if cv is an int instead of a CV object
@@ -259,6 +279,14 @@ class RegressorCV(BaseEstimator, RegressorMixin):
 
         
     def fit(self, X, y, **kwargs):
+        # Apply transformation here if True
+        if self.add_box_cox_target:
+            pt = PowerTransformer(method="box-cox")
+            y = pd.Series(np.where(y==0, np.nan, y))
+            pt.fit(y.to_frame())
+            self.lmda = pt.lambdas_[0]
+            y = boxcox1p(y, self.lmda)
+            
         self.oof_train_ = pd.Series(index=y.index, dtype='float64')
 
         # Check if groups is declared
@@ -331,6 +359,11 @@ class RegressorCV(BaseEstimator, RegressorMixin):
             self.cv_results_['reg'].append(reg)
             self.cv_results_['metrics'].append(metrics)
         self._convert_report_to_df()
+        # TODO: Reverse back if add_box_cox_target is True
+        if self.add_box_cox_target:
+            # self.oof_train_ = inv_boxcox1p(self.oof_train_, self.lmda)
+            y = inv_boxcox1p(y, self.lmda)
+        
         self.oof_score_ = r2_score(y, self.oof_train_)
         self.oof_mape_ = mean_absolute_percentage_error(y, self.oof_train_)
         self.oof_rmse_ = mean_squared_error(y, self.oof_train_, squared=False)
@@ -367,6 +400,9 @@ class RegressorCV(BaseEstimator, RegressorMixin):
 
         y_pred = np.median(y_preds, axis=0)
         
+        # Reverse y_pred here if add_box_cox_target is true
+        if self.add_box_cox_target:
+            y_pred = inv_boxcox1p(y_pred, self.lmda)
         return y_pred
     
     def _convert_report_to_df(self):
@@ -392,14 +428,20 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         return r2, rmse, mape
 
     def _get_reg_metrics(self, reg, X, y):
+        # TODO: Reverse back y_pred if add_box_cox_target is True
+        if self.add_box_cox_target:
+            y = inv_boxcox1p(y, self.lmda)
+        
         y_pred = reg.predict(X)
+        if self.add_box_cox_target:
+            y_pred = inv_boxcox1p(y_pred, self.lmda)
 
         r2, rmse, mape = self._reg_metrics(y, y_pred)
 
         return (r2, rmse, mape), y_pred
 
 class CatBoostRegressorCV(RegressorCV):
-    def __init__(self, cv=5, cat_features=None, groups=None, verbose=False, n_bins_stratify=None, **reg_args):
+    def __init__(self, cv=5, cat_features=None, groups=None, verbose=False, n_bins_stratify=None, add_box_cox_target=False, **reg_args):
         self.cat_features = cat_features
         base_reg = CatBoostRegressor(
             verbose=0,
@@ -411,7 +453,8 @@ class CatBoostRegressorCV(RegressorCV):
             base_reg=base_reg,
             groups=groups,
             verbose=verbose,
-            n_bins_stratify=n_bins_stratify
+            n_bins_stratify=n_bins_stratify,
+            add_box_cox_target = add_box_cox_target
         )
 
 class KNNRegressor(KNeighborsRegressor):
