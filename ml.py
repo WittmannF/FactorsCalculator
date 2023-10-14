@@ -72,7 +72,7 @@ class RegressorTimeSeriesCV(BaseEstimator, RegressorMixin):
     def fit(self, X, y, sample_weight=None):
         if self.add_box_cox_target:
             pt = PowerTransformer(method="box-cox")
-            y = pd.Series(np.where(y==0, np.nan, y))
+            #y = pd.Series(np.where(y==0, np.nan, y))
             pt.fit(y.to_frame())
             self.lmda = pt.lambdas_[0]
             y = boxcox1p(y, self.lmda)
@@ -282,7 +282,7 @@ class RegressorCV(BaseEstimator, RegressorMixin):
         # Apply transformation here if True
         if self.add_box_cox_target:
             pt = PowerTransformer(method="box-cox")
-            y = pd.Series(np.where(y==0, np.nan, y))
+            #y = pd.Series(np.where(y==0, np.nan, y))
             pt.fit(y.to_frame())
             self.lmda = pt.lambdas_[0]
             y = boxcox1p(y, self.lmda)
